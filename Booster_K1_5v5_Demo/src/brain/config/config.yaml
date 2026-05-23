@@ -1,0 +1,180 @@
+brain_node:
+  ros__parameters:
+    # ============================================================
+    # 比赛基本信息 (game)
+    # ============================================================
+    game:
+      team_id: 88                   # 队伍编号, 必须与 GameController 中设置一致
+      player_id: 3                  # 本机器人在队内的编号, 取值 1 | 2 | 3 | 4 | 5
+      field_type: "kid_size"        # 球场类型: adult_size (14m x 9m) | kid_size (9m x 6m) | robo_league
+      player_role: "striker"        # 角色: striker (前锋/普通球员) | goal_keeper (守门员)
+      player_start_pos: "right"     # 入场位置: 自己半场的 right (右侧) 或 left (左侧)
+      treat_person_as_robot: false  # 是否将人类视为机器人, 用于调试. !!!! 正式比赛时, 必须设置为 false !!!!
+      number_of_players: 5          # 我方球队总人数, 用于自动决策与角色切换
+
+    # ============================================================
+    # 球路预测器 (ball_predictor) — 见 posProjector.h
+    # 看不见球时, 根据历史观测拟合直线/匀减速模型预测球未来位置
+    # ============================================================
+    ball_predictor:
+      step_interval: 100.           # 预测时间步长, 单位 ms
+      step_cnt: 50                  # 总共向前预测多少步 (step_cnt * step_interval = 总预测时长)
+      linear_steps: 5               # 用于拟合的最近历史点数, 越多越平滑但反应越慢
+      linear_rsq_threshold: 0.98    # 直线拟合 R² 阈值, 高于此值才认为球在做直线运动
+      acceleration: -0.4            # 球的减速度 (负值表示摩擦减速), 单位 m/s²
+
+    # ============================================================
+    # 机器人本体参数 (robot)
+    # ============================================================
+    robot:
+      robot_height: 0.90            # 机器人身高 (m), 用于由像素计算被测物的距离 (相机高度 → 投影到地面)
+      odom_factor: 1.2              # 里程计修正系数: 实际位移 / odom 报告位移
+      vx_factor: 0.90               # vx 指令修正系数, 用于修正"实际比指令大"的问题
+      yaw_offset: 0.0               # 测距角度补偿, 修正测距时往左偏的问题 (单位: 弧度)
+      vx_limit: 1.2                 # 前后向速度上限 (m/s)
+      vy_limit: 0.5                 # 左右向速度上限 (m/s)
+      vtheta_limit: 1.5             # 转向角速度上限 (rad/s)
+
+    # ============================================================
+    # 策略参数 (strategy)
+    # ============================================================
+    strategy:
+      ball_confidence_threshold: 30.0     # 视觉检测置信度低于此值, 不当作球
+      ball_confidence_decay_rate: 3.0     # 球记忆置信度衰减速率: 看到 100 分的球后, 多久不再看到就丢弃记忆
+      enable_stable_kick: false           # 开启后 kick 前会等数据稳定再出脚 (准但慢)
+      ball_memory_timeout: 3.0            # 多少秒看不到球就清空球记忆 (单位: 秒)
+      tm_ball_dist_threshold: 1.5         # 队友汇报的球位与"我看到的球位"距离阈值, 大于此值才信任队友
+                                          # (避免双方定位误差导致大方向误判)
+      limit_near_ball_speed: false        # 是否在追球靠近时限速
+      near_ball_speed_limit: 0.6          # 靠近球时的最大速度 (m/s)
+      near_ball_range: 2.0                # 距球多近开始限速 (m)
+      soft_kickoff: false                 # 开球时是否使用"软开球"(慢速推球而非大力踢)
+      soft_kickoff_speed: 0.3             # 软开球时的速度 (m/s)
+      kick_range: 1.0                     # 触发踢球动作的距离阈值 (球距机器人 m)
+      kick_theta_range: 0.2               # 触发踢球动作的角度阈值 (机器人朝向与目标方向偏差, rad)
+      abort_kick_when_ball_moved: true    # 踢球过程中如果球被移动, 是否中止
+      abort_kick_ball_move_threshold: 0.3 # 球被移动多少距离 (m) 才中止 kick
+      abort_shoot_when_ball_moved: true   # 同上, 但针对 shoot (RL 大力踢) 动作
+      limit_speed_near_border: false      # 靠近边界时是否限速
+      near_border_speed_limit: 0.5        # 靠近边界时的最大速度 (m/s)
+      near_border_dist_threshold: -1.0    # 距边界多近开始限速 (m); 负值表示在界外多少米才限速
+      enable_bypass: false                # 是否启用"绕过队友/对手"行为
+      enable_shoot: false                 # 是否启用 RL 大力射门动作
+      enable_directional_kick: false      # 是否启用定向踢球 (可选择踢球方向)
+      use_squat_block: true               # 守门员是否使用"蹲下挡球"
+      squat_block_msecs: 2000.0           # 蹲下挡球持续时间 (ms)
+      use_move_block: false               # 守门员是否使用"移动挡球"
+      move_block_msecs: 2000.0            # 移动挡球持续时间 (ms)
+
+      # 普通射门 (RL shoot 动作) 触发区域: 球相对机器人的局部坐标
+      shoot:
+        threat_threshold: -2.0    # 威胁等级阈值, 低于此值才允许 shoot (避免在拥堵时大力踢)
+        xmin: 0.3                 # 球相对机器人 x 范围下限 (m, 前方为正)
+        xmax: 0.6                 # 球相对机器人 x 范围上限 (m)
+        ymin: -0.3                # 球相对机器人 y 范围下限 (m, 左为正)
+        ymax: 0.3                 # 球相对机器人 y 范围上限 (m)
+
+      # 大力射门 (power_shoot) 触发区域
+      power_shoot:
+        enable: false             # 是否启用大力射门
+        use_for_kickoff: false    # 开球时是否使用大力射门
+        xmin: 1.1                 # 球相对机器人 x 范围下限 (m)
+        xmax: 1.5                 # 球相对机器人 x 范围上限 (m)
+        ymin: -0.3                # 球相对机器人 y 范围下限 (m)
+        ymax: 0.3                 # 球相对机器人 y 范围上限 (m)
+
+      enable_auto_visual_defend: false    # 是否启用"基于视觉的自动防守"
+
+      # 多机配合参数
+      cooperation:
+        enable_role_switch: true              # 是否启用动态角色切换 (谁更适合控球谁就控球)
+        ball_control_cost_threshold: 5.0      # 控球成本阈值: 当我方控球成本低于此值才会发起切换
+
+    # ============================================================
+    # 避障参数 (obstacle_avoidance) — 基于深度图栅格化
+    # ============================================================
+    obstacle_avoidance:
+      depth_sample_step: 16                       # 深度图采样步长 (像素), 越大越快但越粗糙
+      obstacle_min_height: 0.3                    # 障碍物最低高度 (m), 低于此高度的点不算障碍
+      grid_size: 0.2                              # 占用栅格分辨率 (m)
+      max_x: 3.0                                  # 栅格图前方范围 (m)
+      max_y: 5.0                                  # 栅格图左右总范围 (m)
+      exclusion_x: 0.4                            # 机身自身排除区 x 半长 (m), 避免误判自身脚部
+      exclusion_y: 0.5                            # 机身自身排除区 y 半宽 (m)
+      ball_exclusion_radius: 0.0                  # 球周围的排除半径 (m), 避免把球当障碍
+      ball_exclusion_height: 0.3                  # 球区域排除的高度阈值 (m)
+      occupancy_threshold: 20                     # 单个栅格内点数超过此值才算"被占用"
+      collision_threshold: 0.3                    # 碰撞距离 (m), 小于此值认为已发生碰撞
+      safe_distance: 1.0                          # 安全距离 (m), 小于此值需要避障
+      avoid_secs: 2.0                             # 每次绕行障碍物的持续时间 (s)
+      enable_freekick_avoid: true                 # 任意球摆球期间是否避障
+      freekick_start_placing_safe_distance: 0.5   # 任意球摆球时的安全距离 (m, 通常更小)
+      freekick_start_placing_avoid_secs: 1.5      # 任意球摆球时的避障时长 (s)
+      obstacle_memory_msecs: 500.                 # 障碍物记忆时长 (ms), 多久没看到就忘掉
+      avoid_during_kick: false                    # kick 过程中是否避障
+      kick_ao_safe_dist: 1.5                      # kick 期间的避障安全距离 (m)
+      kick_ao_use_shoot: false                    # kick 避障时是否改用 shoot 动作
+      avoid_during_chase: true                    # 追球过程中是否避障
+      chase_ao_safe_dist: 1.5                     # 追球期间的避障安全距离 (m)
+      always_turn_left: false                     # 避障时是否固定向左绕 (调试用, 默认根据情况选择)
+
+    # ============================================================
+    # 自定位 (locator) — 粒子滤波
+    # ============================================================
+    locator:
+      min_marker_count: 5     # 至少看到多少个地面标志点 (LCross/TCross/PenaltyPoint…) 才进行定位
+      max_residual: 0.35      # 粒子最终加权偏差大于此值认为定位失败
+
+    enable_com: False                       # 是否开启队友间通信 (UDP 广播)
+
+    # ============================================================
+    # Rerun 可视化日志 (rerunLog)
+    # ============================================================
+    rerunLog:
+      enable_tcp: false                                   # 是否通过网络传输 log
+      server_ip: "192.168.10.110:9876"                    # 开启了 rerun Viewer 的机器地址
+      enable_file: false                                  # 是否将 log 写入本地
+      log_dir: "/home/booster/Workspace/rrlog"            # 本地 log 存储路径, 会在此路径下生成以时间为开头的文件
+      max_log_file_mins: 5.0                              # 本地 log 最长多少分钟就分片存储. 太大的文件会导致读的时候死机.
+      img_interval: 1                                     # 每多少帧图像 log 一次, 如果希望更好的实时性或减少日志大小, 可以调高这个值. 但会造成 log 的时间精度降低.
+
+    # ============================================================
+    # 跌倒恢复 (recovery)
+    # ============================================================
+    recovery:
+      retry_max_count: 2      # 起身失败时最多重试次数
+
+    # ============================================================
+    # 视觉相关 (vision) — 选用哪个相机就启用对应几行, 注释掉另一组
+    # ============================================================
+    vision:
+      # ----- RealSense 相机配置 (默认禁用) -----
+      # image_topic: "/camera/camera/color/image_raw"                          # realsense
+      # depth_image_topic: "/camera/camera/aligned_depth_to_color/image_raw"   # realsense
+      # cam_pixel_width: 1280.    # 相机像素宽度 realsense
+      # cam_pixel_height: 720.    # 相机像素高度 realsense
+      # cam_fov_x: 90.0           # 相机水平视场角 (度) realsense
+      # cam_fov_y: 60.0           # 相机垂直视场角 (度) realsense
+
+      # ----- 地平线 d-robotics StereoNet 配置 (当前启用) -----
+      image_topic: "/StereoNetNode/rectified_image"       # d-robotics 校正后的彩色图话题
+      depth_image_topic: "/StereoNetNode/stereonet_depth" # d-robotics 立体匹配深度图话题
+      cam_pixel_width: 544.                               # 相机像素宽度, d-robotics
+      cam_pixel_height: 448.                              # 相机像素高度, d-robotics
+      cam_fov_x: 69.4                                     # 相机水平视场角 (度), d-robotics
+      cam_fov_y: 42.5                                     # 相机垂直视场角 (度), d-robotics
+
+    # ============================================================
+    # 调试开关 (debug)
+    # ============================================================
+    debug:
+      log_ball_pos: false     # 是否记录球位置到 ballpos.log 中, 用于调试
+
+    game_control_ip: "127.0.0.1"  # 裁判机的 IP 地址, 用于过滤 GameController 广播包来源
+
+    # ============================================================
+    # 娱乐功能 (sound) — 与 sound_play 节点配合使用
+    # ============================================================
+    sound:
+      enable: true            # 是否启用声音播放
+      sound_pack: "espeak"    # 声音包: espeak (英文 TTS) 或自定义语音包名 (放在 sound_play/sounds/<name>/)

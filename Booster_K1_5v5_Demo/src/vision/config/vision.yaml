@@ -1,0 +1,133 @@
+# ============================================================
+# 相机相关 (camera)
+# ============================================================
+camera:
+  type: d-robotics                  # 相机类型标识: d-robotics (地平线 StereoNet) | realsense 等
+  # 相机内参 (Intrinsics) - 像素单位
+  intrin:
+    fx: 204.329544                  # x 方向焦距 (像素)
+    fy: 204.329544                  # y 方向焦距 (像素)
+    cx: 274.194031                  # 主点 x 坐标 (像素)
+    cy: 235.864548                  # 主点 y 坐标 (像素)
+    distortion_model: 0             # 畸变模型: 0 = 无畸变 (kNone), 1 = Brown-Conrady (OpenCV 5 参数模型)
+    distortion_coeffs:              # 畸变系数, 配合 distortion_model 使用; 模型为 0 时留空数组
+      []
+  # 相机外参 (Extrinsics) - 相机坐标系 → 头部坐标系的 4x4 齐次变换矩阵
+  # 由标定节点 (calibration_node) 写入, 不要手动修改
+  extrin:
+    -
+      - -0.00316900876
+      - 0.00997808762
+      - 0.999945164
+      - -0.000310195261
+    -
+      - -0.999994636
+      - -0.000850484008
+      - -0.00316067878
+      - 0.0392914973
+    -
+      - 0.000818899891
+      - -0.999949813
+      - 0.00998072978
+      - -0.0156791788
+    -
+      - 0
+      - 0
+      - 0
+      - 1
+  # 标定后补偿量, 由 calibration_node 自动写回; 用于现场快速微调而无需重新标定
+  pitch_compensation: 0             # 俯仰角补偿 (rad)
+  yaw_compensation: 0               # 偏航角补偿 (rad)
+  z_compensation: 0                 # 高度补偿 (m)
+
+# ============================================================
+# 目标检测模型 (detection_model) - YOLOv8 + TensorRT
+# ============================================================
+detection_model:
+  model_path: ./src/vision/model/best_digua_second_10.3.engine  # TensorRT engine 路径 (相对工作空间根目录)
+  confidence_threshold: 0.2         # 全局置信度阈值, 低于此值的检测框直接过滤
+  nms_threshold: 0.4                # 非极大抑制 IOU 阈值, 越高保留越多重叠框
+  classnames: [Ball, Goalpost, Person, LCross, TCross, XCross, PenaltyPoint, Opponent, BRMarker]
+                                    # 模型输出的类别名 (顺序必须与训练时一致):
+                                    #   Ball         - 足球
+                                    #   Goalpost     - 球门柱
+                                    #   Person       - 人 (调试用)
+                                    #   LCross       - L 型地面标志点 (球场角)
+                                    #   TCross       - T 型地面标志点 (球门区/罚球区边线交叉)
+                                    #   XCross       - X 型地面标志点 (中圈与中线交点)
+                                    #   PenaltyPoint - 罚球点
+                                    #   Opponent     - 对方机器人
+                                    #   BRMarker     - 红蓝标记 (我方/对方机器人识别)
+  # 后处理 (post_process): 针对单一类别再加一道置信度阈值
+  post_process:
+    single_ball_assumption: false   # 是否假设场上只有一个球, 开启后会只保留置信度最高的球
+    confidence_thresholds:          # 各类别的最低置信度 (高于上面的全局阈值才生效)
+      Ball: 0.4
+      Goalpost: 0.4
+      Person: 0.4
+      LCross: 0.3
+      TCross: 0.3
+      XCross: 0.3
+      PenaltyPoint: 0.3
+      Opponent: 0.4
+      BRMarker: 0.2
+
+# ============================================================
+# 分割模型 (segmentation_model) - YOLOv8-seg + TensorRT, 用于识别地面线
+# ============================================================
+segmentation_model:
+  model_path: ./src/vision/model/best_seg_orin_10.3.engine  # TensorRT engine 路径 (Orin 平台专属)
+  confidence_threshold: 0.3         # 置信度阈值
+  nms_threshold: 0.9                # NMS IOU 阈值 (分割任务通常调得很高, 保留更多片段)
+
+use_depth: true                     # 全局深度图开关; 关闭时所有 pose_estimator 退化为单目几何投影
+
+# ============================================================
+# 球的位姿估计 (ball_pose_estimator) - 基于深度点云的球面拟合
+# ============================================================
+ball_pose_estimator:
+  use_depth: false                  # 是否使用深度点云 (优先级高于全局 use_depth); 关闭时用单目+球半径估距
+  radius: 0.109                     # 已知球的物理半径 (m), kid_size 标准为 0.109
+  down_sample_leaf_size: 0.01       # 体素下采样栅格边长 (m), 越小越精确但越慢
+  cluster_distance_threshold: 0.01  # 欧式聚类距离阈值 (m): 两点距离小于此值则视为同一物体
+  fitting_distance_threshold: 0.01  # 球面拟合时点到球面的最大容许距离 (m)
+  minimum_cluster_size: 150         # 聚类最小点数, 少于此值的簇被丢弃
+  filter_distance: 1.2              # 球距离上限 (m), 远于此值的检测被过滤
+  check_ball_height: true           # 是否校验球高度: 拟合出的球心 Z 偏离 radius 太远则视为误检
+
+# ============================================================
+# 类人体 (人/对手机器人) 位姿估计
+# ============================================================
+human_like_pose_estimator:
+  use_depth: false                  # 是否使用深度点云
+  down_sample_leaf_size: 0.01       # 体素下采样栅格边长 (m)
+  fitting_distance_threshold: 0.01  # 拟合距离阈值 (m)
+  statistic_outlier_multiplier: 0.01  # 统计离群点去除的标准差倍数, 越小过滤越严格
+
+# ============================================================
+# 地面标志/线 位姿估计 (field_marker_pose_estimator)
+# ============================================================
+field_marker_pose_estimator:
+  refine: false                     # 是否启用 refine (后处理优化), 开启更准但更慢
+  line_segment_area_threshold: 75   # 线段最小像素面积, 小于此值的分割片段直接丢弃 (滤噪)
+
+# ============================================================
+# 自动标定 (calibration) - 由 calibration_node 使用
+# ============================================================
+calibration:
+  sync_max_time_diff_ms: 1400       # 多源数据同步最大允许时间差 (ms), 超过则丢弃这一帧
+  # offset 子项: 相对真值球场的偏移标定
+  offset:
+    exclude_distance: 2.0           # 标定点与历史标定点距离若小于此值则跳过 (避免重复采样)
+    zero_translation: true          # 是否将平移分量清零, 仅标定旋转
+    field_marker_path: ./src/vision/config/field.yaml   # 球场标志点真值文件路径
+  # handeye 子项: 手眼标定结果 (相机相对头部坐标系)
+  handeye:
+    calibration_time: 2026-01-29-20-38-22       # 上次标定时间戳, 用于追溯
+    reprojection_error: 1.9191697163959622      # 标定后重投影误差 (像素), 越小越好
+
+# ============================================================
+# 杂项 (misc)
+# ============================================================
+misc:
+  save_data_nonstationary: true     # 是否在机器人非静止时也保存数据 (用于离线训练数据采集)
